@@ -31,7 +31,10 @@ import {
   validateRoster,
   verifyOutbox,
 } from "./secret_santa.ts";
-import { decryptToken as siteDecrypt, revealFromHash } from "../../site/link.js";
+import {
+  decryptToken as siteDecrypt,
+  revealFromHash,
+} from "../../site/link.js";
 
 // createModelTestContext() returns a MethodContext typed with a default
 // Record<string, unknown> globalArgs — narrower than each execute()'s own
@@ -42,9 +45,11 @@ function asContext<T>(context: unknown): T {
 
 /** createModelTestContext with GlobalArgs typed as the model's own interface. */
 function testContext(
-  options: Omit<Parameters<typeof createModelTestContext>[0] & object, "globalArgs"> & {
-    globalArgs: GlobalArgs;
-  },
+  options:
+    & Omit<Parameters<typeof createModelTestContext>[0] & object, "globalArgs">
+    & {
+      globalArgs: GlobalArgs;
+    },
 ): ReturnType<typeof createModelTestContext> {
   return createModelTestContext({
     ...options,
@@ -304,7 +309,11 @@ Deno.test("tampered or truncated tokens are rejected by both sides", async () =>
   await assertRejects(() => decryptToken(tampered));
   await assertRejects(() => siteDecrypt(tampered));
   await assertRejects(() => decryptToken(token.slice(0, -5)));
-  await assertRejects(() => siteDecrypt("v2.a.b.c"), Error, "not a Secret Santa");
+  await assertRejects(
+    () => siteDecrypt("v2.a.b.c"),
+    Error,
+    "not a Secret Santa",
+  );
   await assertRejects(() => revealFromHash("#"));
 });
 
@@ -334,7 +343,10 @@ Deno.test("links fit an SMS-friendly length", async () => {
     r: "Auntie Margaret",
     y: 2026,
   });
-  const link = buildLink("https://aaron-dernley.github.io/secret-santa/", token);
+  const link = buildLink(
+    "https://aaron-dernley.github.io/secret-santa/",
+    token,
+  );
   assert(link.length < 200, `link is ${link.length} chars`);
 });
 
@@ -370,7 +382,10 @@ Deno.test("the default message stays GSM-7 so segments aren't wasted", () => {
     year: 2026,
     link: "https://aaron-dernley.github.io/secret-santa/#v1." + "a".repeat(120),
   });
-  assert(smsSegments(body) <= 3, `default body is ${smsSegments(body)} segments`);
+  assert(
+    smsSegments(body) <= 3,
+    `default body is ${smsSegments(body)} segments`,
+  );
   assert(smsSegments(body) === Math.ceil(body.length / 153));
 });
 
@@ -511,7 +526,10 @@ Deno.test("compose writes one message per person with a link that reveals their 
       p.r,
       draw.pairs.find((x) => x.giver === m.name)!.receiver,
     );
-    assert(!m.body.includes(p.r) || p.r === m.name, "receiver isn't in the SMS text");
+    assert(
+      !m.body.includes(p.r) || p.r === m.name,
+      "receiver isn't in the SMS text",
+    );
   }
   assertEquals(
     outbox.totalSegments,
@@ -575,7 +593,10 @@ Deno.test("verifyOutbox catches swapped links, a corrupted link, and a self-draw
   const { draw, outbox } = await drawAndCompose(args);
   const messages = outbox.messages.map((m) => ({ ...m }));
   [messages[0].body, messages[1].body] = [messages[1].body, messages[0].body];
-  messages[2].body = messages[2].body.replace(/.$/, (c) => c === "A" ? "B" : "A");
+  messages[2].body = messages[2].body.replace(
+    /.$/,
+    (c) => c === "A" ? "B" : "A",
+  );
   const selfToken = await encryptToken({
     g: messages[3].name,
     r: messages[3].name,

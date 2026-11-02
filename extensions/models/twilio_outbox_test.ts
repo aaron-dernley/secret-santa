@@ -164,7 +164,8 @@ Deno.test("send_outbox `only` sends a test to one person and lists the rest as s
 Deno.test("send_outbox refuses an `only` name that isn't in the outbox", async () => {
   const h = harness();
   await assertRejects(
-    () => runSendOutbox(args({ only: ["Rudolph"] }), h.context, h.fetch, noSleep),
+    () =>
+      runSendOutbox(args({ only: ["Rudolph"] }), h.context, h.fetch, noSleep),
     Error,
     "rudolph",
   );
@@ -174,7 +175,10 @@ Deno.test("send_outbox refuses an `only` name that isn't in the outbox", async (
 Deno.test("send_outbox keeps going after a failure, records it, then fails the run", async () => {
   const h = harness((b) =>
     b.get("To") === "+447700900121"
-      ? { status: 400, json: { code: 21211, message: "Invalid 'To' Phone Number" } }
+      ? {
+        status: 400,
+        json: { code: 21211, message: "Invalid 'To' Phone Number" },
+      }
       : {
         status: 201,
         json: { sid: `SM${b.get("To")!.slice(-3)}`, status: "queued" },
@@ -198,7 +202,12 @@ Deno.test("sendTwilioSms surfaces HTTP errors without a JSON body", async () => 
   const failing: FetchLike = () =>
     Promise.resolve(new Response("gateway down", { status: 502 }));
   await assertRejects(
-    () => sendTwilioSms(CREDS, { to: "+447700900120", from: "SANTA", body: "x" }, failing),
+    () =>
+      sendTwilioSms(
+        CREDS,
+        { to: "+447700900120", from: "SANTA", body: "x" },
+        failing,
+      ),
     Error,
     "HTTP 502",
   );
@@ -214,9 +223,17 @@ Deno.test("pickOutbox uses the latest version of the named instance", () => {
 });
 
 Deno.test("pickOutbox explains a missing outbox, a malformed one, and an unresolved vault reference", () => {
-  assertThrows(() => pickOutbox([], "outbox"), Error, "run the source model's compose");
   assertThrows(
-    () => pickOutbox([{ name: "outbox", isLatest: true, attributes: {} }], "outbox"),
+    () => pickOutbox([], "outbox"),
+    Error,
+    "run the source model's compose",
+  );
+  assertThrows(
+    () =>
+      pickOutbox(
+        [{ name: "outbox", isLatest: true, attributes: {} }],
+        "outbox",
+      ),
     Error,
     "no messages array",
   );
@@ -236,7 +253,11 @@ Deno.test("pickOutbox explains a missing outbox, a malformed one, and an unresol
         name: "outbox",
         isLatest: true,
         attributes: {
-          messages: [{ name: "A", to: "${{ vault.get(santa, k) }}", body: "x" }],
+          messages: [{
+            name: "A",
+            to: "${{ vault.get(santa, k) }}",
+            body: "x",
+          }],
         },
       }], "outbox"),
     Error,

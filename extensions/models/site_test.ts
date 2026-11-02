@@ -1,11 +1,11 @@
 // Tests for the reveal page's pure helpers (site/santa.js). The page's DOM
-// code isn't exercised here; the screenshots in the README cover that.
+// code isn't exercised here; open site/index.html#demo in a browser for that.
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   blockWidth,
   FRONT,
-  glyphs,
   GLYPHS,
+  glyphs,
   MOON,
   norm,
   REVEAL_COLS,
@@ -17,12 +17,17 @@ import {
 Deno.test("every block glyph is 5 rows of equal width", () => {
   for (const [ch, rows] of Object.entries(GLYPHS)) {
     assertEquals(rows.length, 5, `${ch} has ${rows.length} rows`);
-    assert(rows.every((r) => r.length === rows[0].length), `${ch} rows differ in width`);
+    assert(
+      rows.every((r) => r.length === rows[0].length),
+      `${ch} rows differ in width`,
+    );
   }
 });
 
 Deno.test("block font covers A–Z", () => {
-  for (const c of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") assert(GLYPHS[c as keyof typeof GLYPHS], c);
+  for (const c of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+    assert(GLYPHS[c as keyof typeof GLYPHS], c);
+  }
 });
 
 Deno.test("accents are stripped and unknown characters render as spaces", () => {
@@ -43,11 +48,20 @@ Deno.test("both Santa sprites fit the Santa scene width", () => {
 
 Deno.test("the mooning Santa is symmetric about its centre column", () => {
   // Rows 3–10 are the cheeks and legs; mirror each and compare.
-  const mirror: Record<string, string> = { "/": "\\", "\\": "/", "(": ")", ")": "(" };
+  const mirror: Record<string, string> = {
+    "/": "\\",
+    "\\": "/",
+    "(": ")",
+    ")": "(",
+  };
   for (const [line] of MOON.slice(3, 11)) {
     const padded = line.padEnd(25);
     const flipped = [...padded].reverse().map((c) => mirror[c] ?? c).join("");
-    assertEquals(flipped.replace(/[.'-]/g, "x"), padded.replace(/[.'-]/g, "x"), line);
+    assertEquals(
+      flipped.replace(/[.'-]/g, "x"),
+      padded.replace(/[.'-]/g, "x"),
+      line,
+    );
   }
 });
 
