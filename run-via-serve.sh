@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs the secret-santa workflow through a short-lived swamp serve on its own
-# port, then tears it down. ~/.bashrc points SWAMP_SERVE_URL at the
-# apt-inventory daemon on 9090, so this repo never relies on that variable.
+# port, then tears it down. It passes --server explicitly and clears any
+# inherited SWAMP_SERVE_URL, so it never touches another repo's serve.
 #
 #   ./run-via-serve.sh                                   # dry run, everyone
 #   ./run-via-serve.sh --input testRecipient=Aaron --input dryRun=false
