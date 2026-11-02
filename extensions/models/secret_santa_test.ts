@@ -593,10 +593,12 @@ Deno.test("verifyOutbox catches swapped links, a corrupted link, and a self-draw
   const { draw, outbox } = await drawAndCompose(args);
   const messages = outbox.messages.map((m) => ({ ...m }));
   [messages[0].body, messages[1].body] = [messages[1].body, messages[0].body];
-  messages[2].body = messages[2].body.replace(
-    /.$/,
-    (c) => c === "A" ? "B" : "A",
-  );
+  // Flip the first ciphertext character: the last base64url character can
+  // carry discarded padding bits, so changing it doesn't always change the bytes.
+  const token = extractToken(messages[2].body)!;
+  const parts = token.split(".");
+  parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
+  messages[2].body = messages[2].body.replace(token, parts.join("."));
   const selfToken = await encryptToken({
     g: messages[3].name,
     r: messages[3].name,
