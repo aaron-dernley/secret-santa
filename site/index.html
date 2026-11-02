@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <!-- Deliberately generic: link previews in Messages/WhatsApp must not hint at anyone's name -->
+    <title>A message from Santa</title>
+    <meta name="description" content="Psst... Santa has a message for you.">
+    <meta property="og:title" content="A message from Santa">
+    <meta property="og:description"
+      content="Psst... Santa has a message for you.">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta name="theme-color" content="#0b1426">
+    <link rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎅</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+    <style>
+    /* Full-screen night sky; the ASCII grid is sized to the phone. Single deliberate dark look. */
+    :root {
+      --night: #0b1426;
+      --night-2: #13203a;
+      --snow: #e8eef7;
+      --dim: #5c6b86;
+      --red: #e0453a;
+      --green: #47b57a;
+      --gold: #f2c14e;
+      --skin: #f3c6a4;
+      --boot: #9a6b4a;
+      --fur: #ffffff;
+      --mono: "JetBrains Mono", "DejaVu Sans Mono", "Menlo", "Consolas", monospace;
+      color-scheme: dark;
+    }
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: var(--night);
+      color: var(--snow);
+    }
+    .stage {
+      position: relative;
+      height: 100vh;
+      height: 100dvh;
+      box-sizing: border-box;
+      padding-left: max(8px, env(safe-area-inset-left, 0px));
+      padding-right: max(8px, env(safe-area-inset-right, 0px));
+      padding-top: max(10px, env(safe-area-inset-top, 0px));
+      padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+      background: radial-gradient(120% 70% at 50% 0%, var(--night-2), var(--night)
+        70%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .stage:focus-visible {
+      outline: 2px solid var(--gold);
+      outline-offset: -4px;
+    }
+    pre#screen {
+      margin: 0;
+      font-family: var(--mono);
+      line-height: 1.12;
+      white-space: pre;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .hint {
+      position: absolute;
+      right: max(12px, env(safe-area-inset-right, 0px));
+      bottom: max(8px, env(safe-area-inset-bottom, 0px));
+      font: 11px var(--mono);
+      color: var(--dim);
+      letter-spacing: .04em;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .c-snow {
+      color: var(--snow);
+    }
+    .c-dim {
+      color: var(--dim);
+    }
+    .c-red {
+      color: var(--red);
+    }
+    .c-green {
+      color: var(--green);
+    }
+    .c-gold {
+      color: var(--gold);
+    }
+    .c-skin {
+      color: var(--skin);
+    }
+    .c-boot {
+      color: var(--boot);
+    }
+    .c-fur {
+      color: var(--fur);
+    }
+    .c-bold {
+      color: var(--gold);
+      font-weight: 700;
+    }
+    </style>
+  </head>
+  <body>
+    <main class="stage" id="stage" tabindex="0">
+      <pre id="screen" aria-hidden="true"></pre>
+      <p class="sr-only" id="spoken" aria-live="polite"></p>
+      <span class="hint" id="hint"></span>
+    </main>
+    <noscript><p style="padding:24px;font-family:sans-serif">Santa's message needs JavaScript switched on.</p></noscript>
+    <script type="module">
+    import { revealFromHash } from "./link.js";
+    import { startMessage, startReveal } from "./santa.js";
+
+    const stage = document.getElementById("stage");
+    const screen = document.getElementById("screen");
+    const hint = document.getElementById("hint");
+    const spoken = document.getElementById("spoken");
+
+    try {
+      if (!location.hash || location.hash === "#") throw new Error("no token");
+      const { giver, receiver } = await revealFromHash(location.hash);
+      spoken.textContent =
+        `Merry Christmas, ${giver}. You are Secret Santa for ${receiver}.`;
+      startReveal({ stage, screen, hint, giver, receiver });
+    } catch {
+      spoken.textContent =
+        "This link looks broken. Ask the organiser to resend it.";
+      startMessage({
+        stage,
+        screen,
+        hint,
+        lines: [
+          ["Ho ho... oh no.", "c-bold"],
+          ["This link looks broken or incomplete.", "c-snow"],
+          [
+            "Make sure you opened the whole link from your text, or ask the organiser to send it again.",
+            "c-dim",
+          ],
+        ],
+      });
+    }
+    </script>
+  </body>
+</html>

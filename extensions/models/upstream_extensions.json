@@ -1,0 +1,18 @@
+{
+  "@keeb/twilio": {
+    "version": "2026.07.18.1",
+    "pulledAt": "2026-11-02T09:31:47.089Z",
+    "files": [
+      ".claude/skills/twilio",
+      ".swamp/pulled-extensions/@keeb/twilio/files/LICENSE.txt",
+      ".swamp/pulled-extensions/@keeb/twilio/files/README.md",
+      ".swamp/pulled-extensions/@keeb/twilio/manifest.yaml",
+      ".swamp/pulled-extensions/@keeb/twilio/models/messaging.ts",
+      ".swamp/pulled-extensions/@keeb/twilio/models/phone_numbers.ts"
+    ],
+    "checksum": "5fad6c2bb8be646b09aebeb36d2514708bf25f37e82f5eae28c7c0210176f5cf",
+    "filesChecksum": "0197a264277b6410e6d8d6906935cd53155f4fe1d4af424452eba5404da3e03d",
+    "serverUrl": "https://swamp-club.com",
+    "publishedChannel": "stable"
+  }
+}

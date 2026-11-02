@@ -1,0 +1,6 @@
+id: 0ac0e9df-57d5-4621-947f-e71ecd14840e
+name: santa
+type: local_encryption
+config:
+  auto_generate: true
+createdAt: '2026-11-02T09:40:37.249Z'

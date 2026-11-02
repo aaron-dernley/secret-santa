@@ -1,0 +1,26 @@
+manifestVersion: 1
+name: "@aaronge/secret-santa"
+version: "2026.11.02.1"
+description: "Family Secret Santa: a fair constrained draw (couples excluded, no repeats from last year), a personal encrypted reveal link per person to a cheeky ASCII-Santa page, and one-shot bulk SMS through Twilio."
+
+repository: https://github.com/aaron-dernley/secret-santa
+license: MIT
+
+models:
+  - secret_santa.ts
+  - twilio_outbox.ts
+
+dependencies:
+  - "@keeb/twilio"
+
+additionalFiles:
+  - README.md
+  - LICENSE
+
+labels:
+  - christmas
+  - family
+  - sms
+  - twilio
+
+platforms: []

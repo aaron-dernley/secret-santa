@@ -1,0 +1,14 @@
+{
+  "tasks": {
+    "test": "deno test --allow-net=jsr.io extensions/models/",
+    "check": "deno check extensions/models/*.ts",
+    "lint": "deno lint extensions/models site && deno doc --lint extensions/models/secret_santa.ts extensions/models/twilio_outbox.ts",
+    "serve": "deno run --allow-net --allow-read=site jsr:@std/http@1.0.25/file-server site --port 8080"
+  },
+  "fmt": {
+    "include": ["extensions/models/", "site/"]
+  },
+  "lint": {
+    "include": ["extensions/models/", "site/"]
+  }
+}
