@@ -706,3 +706,18 @@ Deno.test("readOutbox explains an unresolved vault reference", () => {
     "vault",
   );
 });
+
+Deno.test("the default message reads naturally with the event name and year", () => {
+  const body = renderMessage(DEFAULT_MESSAGE_TEMPLATE, {
+    name: "Grandma",
+    event: "Family Secret Santa",
+    year: 2026,
+    link: "L",
+  });
+  assert(body.includes("The Family Secret Santa 2026 draw is done."));
+  assertEquals(
+    body.match(/Secret Santa/g)?.length,
+    1,
+    "no doubled 'Secret Santa'",
+  );
+});

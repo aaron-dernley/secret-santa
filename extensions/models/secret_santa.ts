@@ -23,7 +23,7 @@ import { z } from "npm:zod@4";
 
 /** Default SMS body. GSM-7 characters only, so each 153-character segment is used fully. */
 export const DEFAULT_MESSAGE_TEMPLATE =
-  "Ho ho ho {name}! Your {event} {year} Secret Santa has been drawn. Tap your secret link to find out who you're buying for (don't share it!): {link}";
+  "Ho ho ho {name}! The {event} {year} draw is done. Tap your secret link to see who you're buying for (don't share it!): {link}";
 
 /** Version prefix of the reveal token carried in each link's `#fragment`. */
 export const TOKEN_VERSION = "v1";
