@@ -6,9 +6,20 @@
     "serve": "deno run --allow-net --allow-read=site jsr:@std/http@1.0.25/file-server site --port 8080"
   },
   "fmt": {
-    "include": ["extensions/models/", "site/"]
+    "include": [
+      "extensions/models/",
+      "site/"
+    ]
   },
   "lint": {
-    "include": ["extensions/models/", "site/"]
+    "include": [
+      "extensions/models/",
+      "site/"
+    ],
+    "rules": {
+      "exclude": [
+        "no-import-prefix"
+      ]
+    }
   }
 }
