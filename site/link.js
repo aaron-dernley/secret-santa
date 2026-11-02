@@ -2,7 +2,10 @@
 // extensions/models/secret_santa.ts; secret_santa_test.ts encrypts with the
 // model and decrypts with this file, so the two can't drift apart.
 
-const TOKEN_VERSION = "v1";
+const KEY_BYTES = 16;
+const TAG_BYTES = 16;
+// Each token's key encrypts one message only, so the nonce can be fixed.
+const ZERO_IV = new Uint8Array(12);
 
 function fromBase64Url(s) {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
@@ -11,54 +14,50 @@ function fromBase64Url(s) {
 }
 
 /**
- * Decrypt a `v1.<key>.<iv>.<ciphertext>` token into `{ g, r, y }`
- * (giver, receiver, year). Rejects if the token is malformed or was altered.
+ * Decrypt a base64url token (128-bit AES-GCM key, then the ciphertext of
+ * `giver\nreceiver`) into `{ g, r }`. Rejects if the token is malformed or
+ * was altered.
  * @param {string} token
- * @returns {Promise<{ g: string, r: string, y: number }>}
+ * @returns {Promise<{ g: string, r: string }>}
  */
 export async function decryptToken(token) {
-  const [version, k, iv, ct] = token.split(".");
-  if (version !== TOKEN_VERSION || !k || !iv || !ct) {
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error("not a Secret Santa link token");
+  }
+  const bytes = fromBase64Url(token);
+  if (bytes.length < KEY_BYTES + TAG_BYTES + 3) {
     throw new Error("not a Secret Santa link token");
   }
   const key = await crypto.subtle.importKey(
     "raw",
-    fromBase64Url(k),
+    bytes.slice(0, KEY_BYTES),
     "AES-GCM",
     false,
     ["decrypt"],
   );
   const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromBase64Url(iv) },
+    { name: "AES-GCM", iv: ZERO_IV },
     key,
-    fromBase64Url(ct),
+    bytes.slice(KEY_BYTES),
   );
-  const p = JSON.parse(new TextDecoder().decode(plain));
-  if (
-    typeof p?.g !== "string" || typeof p?.r !== "string" ||
-    typeof p?.y !== "number"
-  ) {
+  const parts = new TextDecoder().decode(plain).split("\n");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error("link token has an unexpected shape");
   }
-  return p;
+  return { g: parts[0], r: parts[1] };
 }
 
 /**
  * Read the reveal from a URL hash. `#demo` gives sample names for trying
  * the page out; anything else must be a token.
  * @param {string} hash e.g. location.hash
- * @returns {Promise<{ giver: string, receiver: string, year: number, demo: boolean }>}
+ * @returns {Promise<{ giver: string, receiver: string, demo: boolean }>}
  */
 export async function revealFromHash(hash) {
   const token = decodeURIComponent(hash.replace(/^#/, "")).trim();
   if (token === "demo") {
-    return {
-      giver: "Rudolph",
-      receiver: "Mrs Claus",
-      year: new Date().getFullYear(),
-      demo: true,
-    };
+    return { giver: "Rudolph", receiver: "Mrs Claus", demo: true };
   }
   const p = await decryptToken(token);
-  return { giver: p.g, receiver: p.r, year: p.y, demo: false };
+  return { giver: p.g, receiver: p.r, demo: false };
 }

@@ -2,8 +2,9 @@
 
 Run the family Secret Santa from [swamp](https://github.com/swamp-club/swamp).
 The draw is fair and random. Couples and households can be kept apart, and
-nobody gets the same person as last year. Each person then gets a text with
-their own secret link. The link opens a Christmas ASCII animation on their
+nobody gets the same person as last year. Each person then gets their own secret
+link, either texted automatically through Twilio or sent by you over email,
+WhatsApp or anything else. The link opens a Christmas ASCII animation on their
 phone: Santa checks nobody's watching, moons them, then reveals who they're
 buying for in big block letters.
 
@@ -21,18 +22,49 @@ buying for in big block letters.
 Try the page with sample names: open the reveal page URL with `#demo` on the
 end.
 
+### Two ways to hand out the links
+
+|                | Text them (`secret-santa` workflow)                       | Send them yourself (`secret-santa-links` workflow)               |
+| -------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
+| Cost           | A few pence per text, paid to Twilio                      | Free                                                             |
+| You need       | A Twilio account (see below) and everyone's mobile number | Nothing extra. Phone numbers are optional.                       |
+| How it arrives | An SMS from `SANTA` (or your Twilio number)               | Whatever you choose: email, WhatsApp, a card, read out at dinner |
+| What you do    | Run the workflow                                          | Copy each message from a private file and send it to that person |
+
+You can mix them. People with a phone number get texted, and anyone without one
+is skipped by the text run, so you send their link from the file instead.
+
+**Texting needs a Twilio account.** Twilio is a paid SMS service, and this
+extension can't send texts without it. Before the first send you need:
+
+1. A Twilio account, **upgraded** from the free trial with some credit. Trial
+   accounts can only text numbers you've verified, and add a trial notice to
+   every message.
+2. An approved **Primary Customer Profile** in Twilio's Trust Hub. An Individual
+   profile is enough for a family: your name, address, a photo ID and a selfie.
+   Approval takes up to two days. Until it's approved, every send fails with
+   Twilio error 20003.
+3. Your account SID and auth token from the Twilio Console, stored in a vault
+   (see Usage).
+
+Texting UK numbers from the alphanumeric sender `SANTA` needs no phone number
+from Twilio. Other countries may need you to buy a Twilio number and pass it as
+`from`. If you'd rather not set any of this up, use the links file.
+
 ## Installation
 
 ```sh
 swamp extension pull @aaronge/secret-santa
 ```
 
-This also needs `@keeb/twilio` (declared as a dependency) for sending texts.
+This also pulls `@keeb/twilio` (a declared dependency), which is only used if
+you text the links.
 
 ## Usage
 
-Store each phone number and your Twilio credentials in a vault. Each `vault put`
-prompts for the value, so it never ends up in your shell history:
+If you're texting, store each phone number and your Twilio credentials in a
+vault. Each `vault put` prompts for the value, so it never ends up in your shell
+history. Skip this if you're only sending the links yourself.
 
 ```sh
 swamp vault create local_encryption santa
@@ -43,7 +75,7 @@ swamp vault put santa TWILIO_ACCOUNT_SID
 swamp vault put santa TWILIO_AUTH_TOKEN
 ```
 
-Create the two models. Here's a `santa-family` definition:
+Create the `santa-family` model:
 
 ```yaml
 type: "@aaronge/secret-santa"
@@ -57,21 +89,35 @@ globalArguments:
       phone: ${{ vault.get(santa, PHONE_AARON) }}
     - name: Grandma
       phone: ${{ vault.get(santa, PHONE_GRANDMA) }}
-    # ...
+    - name: Grandad # no phone: send his link yourself
+  # ...
   exclusions:
     - [Grandma, Grandad]
   avoidRepeatYears: 1
+  shortener: is.gd # optional: short links in the message
   history: # optional: last year's draw, if it wasn't done here
     - year: 2025
       pairs:
         - { giver: Aaron, receiver: Grandad }
 ```
 
-The `twilio` model is a `@keeb/twilio/messaging` instance with
-`accountSid: ${{ vault.get(santa, TWILIO_ACCOUNT_SID) }}` and
-`authToken: ${{ vault.get(santa, TWILIO_AUTH_TOKEN) }}`.
+### Sending the links yourself (free)
 
-Then run the workflow:
+```sh
+swamp workflow run secret-santa-links
+```
+
+This draws, composes and verifies, then writes every person's message to
+`~/secret-santa-links-<year>.txt`. Only your user can read the file. Copy each
+message to its person, then delete the file. Anyone who sees a message can see
+who that person drew. Pass `--input path=...` to write the file somewhere else,
+but keep it out of git.
+
+### Texting the links (Twilio)
+
+Create a `twilio` model: a `@keeb/twilio/messaging` instance with
+`accountSid: ${{ vault.get(santa, TWILIO_ACCOUNT_SID) }}` and
+`authToken: ${{ vault.get(santa, TWILIO_AUTH_TOKEN) }}`. Then run:
 
 ```sh
 # Dry run: draw, compose, verify, and log who *would* be texted
@@ -90,16 +136,17 @@ test link is replaced by the one in the final send. Both reveal the same person.
 
 ## Global arguments (`@aaronge/secret-santa`)
 
-| Argument           | Type                   | Default               | Description                                                                                           |
-| ------------------ | ---------------------- | --------------------- | ----------------------------------------------------------------------------------------------------- |
-| `eventName`        | string                 | `Family Secret Santa` | Event name used in the SMS.                                                                           |
-| `year`             | integer                | required              | Year being drawn; draws are stored per year.                                                          |
-| `baseUrl`          | URL                    | required              | Where the reveal page (`site/`) is hosted. The token goes after `#`.                                  |
-| `participants`     | `{name, phone}[]`, ≥ 3 | required              | Everyone taking part. Phones accept `07…`, `+44…`, `0044…` or any E.164 number; use vault references. |
-| `exclusions`       | `[name, name][]`       | `[]`                  | Pairs who must not draw each other, in either direction.                                              |
-| `avoidRepeatYears` | integer 0–10           | `1`                   | Nobody gets someone they had in this many previous years. `0` turns it off.                           |
-| `history`          | `{year, pairs[]}[]`    | `[]`                  | Earlier draws entered by hand. Draws made by this model are remembered automatically.                 |
-| `messageTemplate`  | string                 | see source            | SMS text with `{name}`, `{event}`, `{year}`, `{link}`. Must contain `{link}`.                         |
+| Argument           | Type                    | Default               | Description                                                                                                                            |
+| ------------------ | ----------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `eventName`        | string                  | `Family Secret Santa` | Event name used in the SMS.                                                                                                            |
+| `year`             | integer                 | required              | Year being drawn; draws are stored per year.                                                                                           |
+| `baseUrl`          | URL                     | required              | Where the reveal page (`site/`) is hosted. The token goes after `#`.                                                                   |
+| `participants`     | `{name, phone?}[]`, ≥ 3 | required              | Everyone taking part. `phone` is only needed for texting; it accepts `07…`, `+44…`, `0044…` or any E.164 number. Use vault references. |
+| `exclusions`       | `[name, name][]`        | `[]`                  | Pairs who must not draw each other, in either direction.                                                                               |
+| `avoidRepeatYears` | integer 0–10            | `1`                   | Nobody gets someone they had in this many previous years. `0` turns it off.                                                            |
+| `history`          | `{year, pairs[]}[]`     | `[]`                  | Earlier draws entered by hand. Draws made by this model are remembered automatically.                                                  |
+| `messageTemplate`  | string                  | see source            | Message text with `{name}`, `{event}`, `{year}`, `{link}`. Must contain `{link}`.                                                      |
+| `shortener`        | `none` or `is.gd`       | `none`                | Put a short `https://is.gd/…` link in the message instead of the full one. See below.                                                  |
 
 `send_outbox` (added to `@keeb/twilio/messaging`) takes:
 
@@ -131,9 +178,17 @@ test link is replaced by the one in the final send. Both reveal the same person.
 
 ### `compose` → `outbox`
 
-- For each person it encrypts `{giver, receiver, year}` with its own random
-  128-bit AES-GCM key into `v1.<key>.<iv>.<ciphertext>`, appends that to
-  `baseUrl` after `#`, and fills in the message template.
+- For each person it encrypts `giver` and `receiver` with its own random 128-bit
+  AES-GCM key. The token is that key followed by the ciphertext, about 60
+  base64url characters. It goes after `#` on `baseUrl`, and then the message
+  template is filled in.
+- Each key encrypts exactly one message, so the nonce is fixed and stays out of
+  the URL.
+- With `shortener: is.gd`, each full link is shortened by is.gd's free API,
+  which keeps the `#fragment` in its redirect. The trade-off is that is.gd
+  stores the full links, so it could in principle see who drew whom. Leave
+  `shortener` as `none` if that matters to you. Some phone networks are wary of
+  shortened links in texts, so send yourself a test first.
 - It counts SMS segments and avoids characters that would force a costlier
   encoding.
 - The outbox is marked `sensitiveOutput`, so swamp stores it in the vault.
@@ -144,9 +199,20 @@ test link is replaced by the one in the final send. Both reveal the same person.
   - each link is addressed to the person receiving it,
   - it matches the stored draw,
   - nobody has themselves or an excluded partner,
-  - everyone is bought for exactly once.
+  - everyone is bought for exactly once,
+  - each message contains its link, or a short link that redirects to exactly
+    that link (checked with a `HEAD` request, without following it).
 - Its problem messages never say who drew whom. The workflow won't send unless
   `ok` is true.
+
+### `export_links` → `linkexport`
+
+- Re-runs the link check and refuses to export if it fails.
+- Writes every message, ready to paste, to a file with `0600` permissions. The
+  default file is `~/secret-santa-links-<year>.txt`. Phone numbers are never
+  written to it.
+- `only` exports just the names you list.
+- The `linkexport` record holds only the path and counts, never the links.
 
 ### `send_outbox` → `message`, `bulkSend`
 
@@ -154,6 +220,8 @@ test link is replaced by the one in the final send. Both reveal the same person.
   with `readModelData` if no expression is given. It then posts each text to
   Twilio's REST API with a pause between them.
 - Logs show only names and masked numbers.
+- People without a phone number are skipped, and listed under `noPhone` in
+  `bulkSend`, so you send their links yourself.
 - A failed text doesn't stop the rest. Failures are listed in `bulkSend` and
   fail the step, so you can re-send to just those people with `only`.
 
@@ -168,20 +236,26 @@ test link is replaced by the one in the final send. Both reveal the same person.
 
 ## Workflow
 
-`secret-santa` runs **manually**. It has no schedule, because this happens once
-a year. Its jobs run in order:
+Both workflows run **manually**. Neither has a schedule, because this happens
+once a year. They share the same first two jobs:
 
 - `prepare`: draw, compose, then verify
 - `check`: asserts the link check passed
-- `send`: runs `send_outbox`
 
-The `send` job is a dry run unless you pass `dryRun=false`. Pass `testRecipient`
-to text one person, and `redraw=true` to reshuffle.
+`secret-santa` then runs `send`, which calls `send_outbox` through Twilio. It's
+a dry run unless you pass `dryRun=false`. Pass `testRecipient` to text one
+person, and `redraw=true` to reshuffle.
+
+`secret-santa-links` then runs `export`, which calls `export_links`. Pass `path`
+to choose where the file goes, and `redraw=true` to reshuffle.
+
+Both use the same stored draw, so you can text some people and send the rest
+their links from the file.
 
 ## Development
 
 ```sh
-deno task test    # unit tests: solver, crypto round-trip with the page, SMS segments, sending
+deno task test    # unit tests: solver, crypto round-trip with the page, short links, SMS segments, sending, export
 deno task lint
 deno task serve   # preview the page at http://localhost:8080/#demo
 ```

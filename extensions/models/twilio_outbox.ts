@@ -20,8 +20,8 @@ export const DEFAULT_THROTTLE_MS = 1100;
 export interface OutboxEntry {
   /** Recipient's name, used for logging and the summary (never the number). */
   name: string;
-  /** Destination number, E.164. */
-  to: string;
+  /** Destination number, E.164; absent for people without one, who are skipped. */
+  to?: string;
   /** SMS body. */
   body: string;
 }
@@ -131,17 +131,19 @@ export function parseMessages(value: unknown, label: string): OutboxEntry[] {
   }
   return messages.map((m, i) => {
     if (
-      typeof m?.name !== "string" || typeof m?.to !== "string" ||
-      typeof m?.body !== "string"
+      typeof m?.name !== "string" || typeof m?.body !== "string" ||
+      (m?.to !== undefined && typeof m.to !== "string")
     ) {
-      throw new Error(`${label} message ${i + 1} is missing name/to/body`);
+      throw new Error(`${label} message ${i + 1} is missing name/body`);
     }
-    if (m.to.startsWith("${{")) {
+    if (m.to?.startsWith("${{")) {
       throw new Error(
         `${label} message for ${m.name} still holds an unresolved vault reference`,
       );
     }
-    return { name: m.name, to: m.to, body: m.body };
+    return m.to
+      ? { name: m.name, to: m.to, body: m.body }
+      : { name: m.name, body: m.body };
   });
 }
 
@@ -181,6 +183,9 @@ const BulkSendSchema = z.object({
   skipped: z.array(z.string()).describe(
     "Recipients left out by the `only` filter.",
   ),
+  noPhone: z.array(z.string()).describe(
+    "Recipients with no phone number, whose link the organiser hands over (export_links).",
+  ),
   finishedAt: z.string().describe("ISO-8601 timestamp."),
 });
 
@@ -196,6 +201,8 @@ export interface BulkSend {
   failed: { name: string; error: string }[];
   /** Recipients left out by the `only` filter. */
   skipped: string[];
+  /** Recipients with no phone number, whose link the organiser hands over. */
+  noPhone: string[];
   /** ISO-8601 timestamp. */
   finishedAt: string;
 }
@@ -221,7 +228,11 @@ const SendOutboxArgsSchema = z.object({
   messages: z.union([
     z.string(),
     z.array(
-      z.object({ name: z.string(), to: z.string(), body: z.string() })
+      z.object({
+        name: z.string(),
+        to: z.string().optional(),
+        body: z.string(),
+      })
         .passthrough(),
     ),
   ]).optional().describe(
@@ -244,7 +255,7 @@ export interface SendOutboxArgs {
   /** Pause between sends in milliseconds. */
   throttleMs: number;
   /** The outbox messages, as an array or its JSON text; read from sourceModel when omitted. */
-  messages?: string | { name: string; to: string; body: string }[];
+  messages?: string | { name: string; to?: string; body: string }[];
 }
 
 /** Method context fields `send_outbox` uses. */
@@ -290,6 +301,16 @@ export async function runSendOutbox(
     ? all.filter((m) => wanted.has(m.name.trim().toLowerCase()))
     : all;
   const skipped = all.filter((m) => !targets.includes(m)).map((m) => m.name);
+  const noPhone = targets.filter((m) => !m.to).map((m) => m.name);
+  for (const name of noPhone) {
+    context.logger.info(
+      "{name} has no phone number; send their link yourself (export_links)",
+      { name },
+    );
+  }
+  const textable = targets.filter(
+    (m): m is OutboxEntry & { to: string } => !!m.to,
+  );
   const unknown = [...wanted].filter((n) =>
     !all.some((m) => m.name.trim().toLowerCase() === n)
   );
@@ -300,7 +321,7 @@ export async function runSendOutbox(
   const handles: { name: string }[] = [];
   const sent: BulkSend["sent"] = [];
   const failed: BulkSend["failed"] = [];
-  for (const [i, m] of targets.entries()) {
+  for (const [i, m] of textable.entries()) {
     if (args.dryRun) {
       context.logger.info("[dry run] would text {name} at {to}", {
         name: m.name,
@@ -344,6 +365,7 @@ export async function runSendOutbox(
     sent,
     failed,
     skipped,
+    noPhone,
     finishedAt: new Date().toISOString(),
   };
   handles.push(
@@ -355,7 +377,7 @@ export async function runSendOutbox(
   );
   if (failed.length) {
     throw new Error(
-      `${failed.length} of ${targets.length} messages failed: ${
+      `${failed.length} of ${textable.length} messages failed: ${
         failed.map((f) => `${f.name} (${f.error})`).join("; ")
       }. Re-run with only=[those names] after fixing.`,
     );

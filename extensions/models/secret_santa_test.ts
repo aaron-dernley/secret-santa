@@ -13,9 +13,12 @@ import {
   cryptoRandomInt,
   decryptToken,
   DEFAULT_MESSAGE_TEMPLATE,
+  defaultExportPath,
   drawInstance,
   encryptToken,
   extractToken,
+  findShortLink,
+  formatLinkExport,
   type GlobalArgs,
   model,
   nameKey,
@@ -25,7 +28,9 @@ import {
   readOutbox,
   recentPairs,
   renderMessage,
+  resolveShortLink,
   revive,
+  shortenLink,
   smsSegments,
   solveDraw,
   validateRoster,
@@ -85,6 +90,7 @@ function globalArgs(overrides: Partial<GlobalArgs> = {}): GlobalArgs {
     avoidRepeatYears: 1,
     history: [],
     messageTemplate: DEFAULT_MESSAGE_TEMPLATE,
+    shortener: "none",
     ...overrides,
   };
 }
@@ -278,47 +284,47 @@ Deno.test("recentPairs only returns pairs inside the window, from history and st
 // --- reveal tokens and links ---------------------------------------------
 
 Deno.test("encryptToken → decryptToken round-trips, including accents and spaces", async () => {
-  const payload = { g: "Zoë", r: "Auntie Margaret", y: 2026 };
+  const payload = { g: "Zoë", r: "Auntie Margaret" };
   assertEquals(await decryptToken(await encryptToken(payload)), payload);
 });
 
 Deno.test("the reveal page decrypts what the model encrypts", async () => {
-  const token = await encryptToken({ g: "Aaron", r: "Grandma", y: 2026 });
-  assertEquals(await siteDecrypt(token), { g: "Aaron", r: "Grandma", y: 2026 });
+  const token = await encryptToken({ g: "Aaron", r: "Grandma" });
+  assertEquals(await siteDecrypt(token), { g: "Aaron", r: "Grandma" });
   const link = buildLink("https://example.github.io/secret-santa/", token);
   const hash = new URL(link).hash;
   assertEquals(await revealFromHash(hash), {
     giver: "Aaron",
     receiver: "Grandma",
-    year: 2026,
     demo: false,
   });
 });
 
 Deno.test("every token uses a fresh key, so identical payloads differ", async () => {
-  const p = { g: "A", r: "B", y: 2026 };
+  const p = { g: "A", r: "B" };
   assertNotEquals(await encryptToken(p), await encryptToken(p));
 });
 
 Deno.test("tampered or truncated tokens are rejected by both sides", async () => {
-  const token = await encryptToken({ g: "Aaron", r: "Grandma", y: 2026 });
-  const parts = token.split(".");
-  const ct = parts[3];
-  parts[3] = (ct[0] === "A" ? "B" : "A") + ct.slice(1);
-  const tampered = parts.join(".");
+  const token = await encryptToken({ g: "Aaron", r: "Grandma" });
+  // Flip a ciphertext character (index 22 is past the 16-byte key). The last
+  // base64url character can carry discarded padding bits, so avoid it.
+  const tampered = token.slice(0, 22) + (token[22] === "A" ? "B" : "A") +
+    token.slice(23);
   await assertRejects(() => decryptToken(tampered));
   await assertRejects(() => siteDecrypt(tampered));
   await assertRejects(() => decryptToken(token.slice(0, -5)));
   await assertRejects(
-    () => siteDecrypt("v2.a.b.c"),
+    () => siteDecrypt("v1.a.b.c"),
     Error,
     "not a Secret Santa",
   );
+  await assertRejects(() => siteDecrypt("abc"), Error, "not a Secret Santa");
   await assertRejects(() => revealFromHash("#"));
 });
 
 Deno.test("the token never contains the names in readable or base64 form", async () => {
-  const token = await encryptToken({ g: "Aaron", r: "Grandma", y: 2026 });
+  const token = await encryptToken({ g: "Aaron", r: "Grandma" });
   assert(!token.includes("Grandma"));
   assert(!token.includes(btoa("Grandma").slice(0, 6)));
 });
@@ -330,7 +336,7 @@ Deno.test("#demo on the reveal page gives sample names without a token", async (
 });
 
 Deno.test("buildLink replaces any existing fragment and extractToken finds it in an SMS", async () => {
-  const token = await encryptToken({ g: "A", r: "B", y: 2026 });
+  const token = await encryptToken({ g: "A", r: "B" });
   const link = buildLink("https://x.test/s/#old", token);
   assertEquals(link, `https://x.test/s/#${token}`);
   assertEquals(extractToken(`Hi! Tap ${link} (shh)`), token);
@@ -341,13 +347,20 @@ Deno.test("links fit an SMS-friendly length", async () => {
   const token = await encryptToken({
     g: "Christopher",
     r: "Auntie Margaret",
-    y: 2026,
   });
   const link = buildLink(
     "https://aaron-dernley.github.io/secret-santa/",
     token,
   );
-  assert(link.length < 200, `link is ${link.length} chars`);
+  assert(link.length < 130, `link is ${link.length} chars`);
+});
+
+Deno.test("names with line breaks can't be encrypted", async () => {
+  await assertRejects(
+    () => encryptToken({ g: "A\nB", r: "C" }),
+    Error,
+    "line breaks",
+  );
 });
 
 // --- message rendering and SMS segments ---------------------------------
@@ -517,9 +530,10 @@ Deno.test("compose writes one message per person with a link that reveals their 
   assertEquals(composeWritten[0].specName, "outbox");
   assertEquals(outbox.messages.length, 6);
   for (const m of outbox.messages) {
-    assertMatch(m.to, /^\+447700900\d{3}$/);
+    assertMatch(m.to!, /^\+447700900\d{3}$/);
     assert(m.body.startsWith(`Ho ho ho ${m.name}!`));
-    assert(m.body.includes(args.baseUrl));
+    assert(m.body.includes(m.link));
+    assert(m.link.startsWith(args.baseUrl));
     const p = await siteDecrypt(extractToken(m.body)!);
     assertEquals(p.g, m.name);
     assertEquals(
@@ -592,19 +606,20 @@ Deno.test("verifyOutbox catches swapped links, a corrupted link, and a self-draw
   const args = globalArgs();
   const { draw, outbox } = await drawAndCompose(args);
   const messages = outbox.messages.map((m) => ({ ...m }));
+  [messages[0].link, messages[1].link] = [messages[1].link, messages[0].link];
   [messages[0].body, messages[1].body] = [messages[1].body, messages[0].body];
-  // Flip the first ciphertext character: the last base64url character can
-  // carry discarded padding bits, so changing it doesn't always change the bytes.
-  const token = extractToken(messages[2].body)!;
-  const parts = token.split(".");
-  parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
-  messages[2].body = messages[2].body.replace(token, parts.join("."));
+  // Flip a ciphertext character: the last base64url character can carry
+  // discarded padding bits, so changing it doesn't always change the bytes.
+  const token = extractToken(messages[2].link)!;
+  const bad = token.slice(0, 22) + (token[22] === "A" ? "B" : "A") +
+    token.slice(23);
+  messages[2].link = messages[2].link.replace(token, bad);
+  messages[2].body = messages[2].body.replace(token, bad);
   const selfToken = await encryptToken({
     g: messages[3].name,
     r: messages[3].name,
-    y: 2026,
   });
-  messages[3].body = buildLink(args.baseUrl, selfToken);
+  messages[3].link = messages[3].body = buildLink(args.baseUrl, selfToken);
   const result = await verifyOutbox(args, draw, { year: 2026, messages });
   assertEquals(result.ok, false);
   const text = result.problems.join("\n");
@@ -616,19 +631,18 @@ Deno.test("verifyOutbox catches swapped links, a corrupted link, and a self-draw
   }
 });
 
-Deno.test("verifyOutbox flags a link that breaks an exclusion and a wrong year", async () => {
+Deno.test("verifyOutbox flags a link that breaks an exclusion", async () => {
   const args = globalArgs();
   const { draw, outbox } = await drawAndCompose(args);
   const messages = outbox.messages.map((m) => ({ ...m }));
   const grandma = messages.findIndex((m) => m.name === "Grandma");
-  messages[grandma].body = buildLink(
+  messages[grandma].link = messages[grandma].body = buildLink(
     args.baseUrl,
-    await encryptToken({ g: "Grandma", r: "Grandad", y: 2025 }),
+    await encryptToken({ g: "Grandma", r: "Grandad" }),
   );
   const result = await verifyOutbox(args, draw, { year: 2026, messages });
   const text = result.problems.join("\n");
   assert(text.includes("breaks an exclusion"));
-  assert(text.includes("is for 2025"));
 });
 
 Deno.test("verify fails loudly when there's nothing to check", async () => {
@@ -720,4 +734,217 @@ Deno.test("the default message reads naturally with the event name and year", ()
     1,
     "no doubled 'Secret Santa'",
   );
+});
+
+// --- short links ----------------------------------------------------------
+
+/** Fake is.gd: hands out is.gd/<n> codes and redirects them to the long link. */
+function fakeIsGd() {
+  const links = new Map<string, string>();
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/create.php") {
+      const short = `https://is.gd/s${links.size}`;
+      links.set(short, url.searchParams.get("url")!);
+      return Promise.resolve(new Response(short));
+    }
+    const target = links.get(url.href);
+    assertEquals(init?.redirect, "manual");
+    return Promise.resolve(
+      target
+        ? new Response(null, { status: 301, headers: { location: target } })
+        : new Response("not found", { status: 404 }),
+    );
+  }) as typeof fetch;
+  return { links, fetchFn };
+}
+
+Deno.test("shortenLink returns the is.gd link and rejects an error reply", async () => {
+  const { links, fetchFn } = fakeIsGd();
+  const short = await shortenLink("https://x.test/#tok", fetchFn);
+  assertEquals(short, "https://is.gd/s0");
+  assertEquals(links.get(short), "https://x.test/#tok");
+  const failing = (() =>
+    Promise.resolve(
+      new Response("Error: Sorry, the URL you entered is on our blacklist", {
+        status: 200,
+      }),
+    )) as typeof fetch;
+  await assertRejects(
+    () => shortenLink("https://x.test/#tok", failing),
+    Error,
+    "is.gd couldn't shorten",
+  );
+});
+
+Deno.test("findShortLink and resolveShortLink find and follow a short link", async () => {
+  const { links, fetchFn } = fakeIsGd();
+  links.set("https://is.gd/abc", "https://x.test/#tok");
+  assertEquals(findShortLink("Tap https://is.gd/abc now"), "https://is.gd/abc");
+  assertEquals(findShortLink("no link"), null);
+  assertEquals(
+    await resolveShortLink("https://is.gd/abc", fetchFn),
+    "https://x.test/#tok",
+  );
+  assertEquals(await resolveShortLink("https://is.gd/nope", fetchFn), null);
+});
+
+Deno.test("compose with shortener is.gd puts short links in the SMS and verify follows them", async () => {
+  const { links, fetchFn } = fakeIsGd();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = fetchFn;
+  try {
+    const args = globalArgs({ shortener: "is.gd" });
+    const { draw, outbox } = await drawAndCompose(args);
+    for (const m of outbox.messages) {
+      const short = findShortLink(m.body)!;
+      assert(short, "body has a short link");
+      assert(!m.body.includes(m.link), "full link isn't in the SMS");
+      assertEquals(links.get(short), m.link);
+      assertEquals(m.segments, 1, "short body fits one SMS");
+    }
+    const ok = await verifyOutbox(
+      args,
+      draw,
+      outbox,
+      (u) => resolveShortLink(u, fetchFn),
+    );
+    assertEquals(ok.problems, []);
+
+    // A short link that points at someone else's reveal is caught.
+    const swapped = outbox.messages.map((m) => ({ ...m }));
+    [swapped[0].body, swapped[1].body] = [swapped[1].body, swapped[0].body];
+    const bad = await verifyOutbox(args, draw, {
+      year: 2026,
+      messages: swapped,
+    }, (u) => resolveShortLink(u, fetchFn));
+    assert(bad.problems.some((p) => p.includes("short link doesn't open")));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+Deno.test("verifyOutbox flags a message that has neither the link nor a short link", async () => {
+  const args = globalArgs();
+  const { draw, outbox } = await drawAndCompose(args);
+  const messages = outbox.messages.map((m) => ({ ...m }));
+  messages[0].body = "Ho ho ho, link lost";
+  const result = await verifyOutbox(args, draw, { year: 2026, messages });
+  assert(result.problems.some((p) => p.includes("doesn't contain their link")));
+});
+
+// --- people without phone numbers and export_links -----------------------
+
+Deno.test("phone numbers are optional: compose leaves `to` out and verify still passes", async () => {
+  const args = globalArgs({
+    participants: FAMILY.map((name, i) =>
+      i % 2 ? { name } : { name, phone: `07700 90012${i}` }
+    ),
+  });
+  assertEquals(validateRoster(args.participants, args.exclusions), []);
+  const { draw, outbox } = await drawAndCompose(args);
+  assertEquals(outbox.messages.filter((m) => m.to).length, 3);
+  assertEquals((await verifyOutbox(args, draw, outbox)).ok, true);
+});
+
+Deno.test("formatLinkExport lists one ready-to-send message per person", () => {
+  const text = formatLinkExport("Family Secret Santa", 2026, [
+    {
+      name: "Aaron",
+      to: "+447700900120",
+      body: "Hi Aaron L1",
+      link: "L1",
+      segments: 1,
+    },
+    { name: "Beth", body: "Hi Beth L2", link: "L2", segments: 1 },
+  ]);
+  assert(text.startsWith("Family Secret Santa 2026: reveal links"));
+  assert(
+    text.includes(
+      "== Aaron (also has a phone number for texting)\nHi Aaron L1",
+    ),
+  );
+  assert(text.includes("== Beth\nHi Beth L2"));
+  assert(!text.includes("+447700900120"), "numbers stay out of the file");
+});
+
+Deno.test("export_links writes a private file and records only where it went", async () => {
+  const args = globalArgs();
+  const { draw, outbox } = await drawAndCompose(args);
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = `${dir}/links.txt`;
+    const c = testContext({
+      globalArgs: args,
+      storedResources: { [drawInstance(2026)]: draw, outbox },
+    });
+    await model.methods.export_links.execute(
+      { path, only: [] },
+      asContext(c.context),
+    );
+    const text = await Deno.readTextFile(path);
+    for (const m of outbox.messages) assert(text.includes(m.body));
+    if (Deno.build.os !== "windows") {
+      assertEquals((await Deno.stat(path)).mode! & 0o777, 0o600);
+    }
+    const rec = c.getWrittenResources()[0];
+    assertEquals(rec.specName, "linkExport");
+    assertEquals((rec.data as { count: number }).count, 6);
+    assert(!JSON.stringify(rec.data).includes("#"), "no links in the record");
+
+    await model.methods.export_links.execute(
+      { path, only: ["beth"] },
+      asContext(c.context),
+    );
+    const one = await Deno.readTextFile(path);
+    assert(one.includes("== Beth") && !one.includes("== Aaron"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("export_links refuses links that fail their check, and unknown names", async () => {
+  const args = globalArgs();
+  const { draw, outbox } = await drawAndCompose(args);
+  const broken = {
+    ...outbox,
+    messages: outbox.messages.map((m, i) => i ? m : { ...m, body: "lost" }),
+  };
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = `${dir}/links.txt`;
+    const bad = testContext({
+      globalArgs: args,
+      storedResources: { [drawInstance(2026)]: draw, outbox: broken },
+    });
+    await assertRejects(
+      () =>
+        model.methods.export_links.execute(
+          { path, only: [] },
+          asContext(bad.context),
+        ),
+      Error,
+      "failed their check",
+    );
+    const ok = testContext({
+      globalArgs: args,
+      storedResources: { [drawInstance(2026)]: draw, outbox },
+    });
+    await assertRejects(
+      () =>
+        model.methods.export_links.execute(
+          { path, only: ["Rudolph"] },
+          asContext(ok.context),
+        ),
+      Error,
+      "rudolph",
+    );
+    await assertRejects(() => Deno.stat(path), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("defaultExportPath is in the home directory, outside the repo", () => {
+  assert(defaultExportPath(2026).endsWith("/secret-santa-links-2026.txt"));
 });

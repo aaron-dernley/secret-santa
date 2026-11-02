@@ -1,8 +1,8 @@
 /**
  * Family Secret Santa as a typed, versioned Swamp model. The organiser keeps
- * the roster (names plus vault-referenced phone numbers), couple/household
- * exclusions and the event details in global arguments. Three methods then
- * run the year:
+ * the roster (names plus optional vault-referenced phone numbers),
+ * couple/household exclusions and the event details in global arguments.
+ * These methods then run the year:
  *
  * - `draw` assigns everyone a person to buy for. Nobody draws themselves,
  *   nobody draws someone they're excluded from, and nobody gets the same
@@ -12,10 +12,14 @@
  *   `#fragment`, which browsers never send to the web server, so the static
  *   reveal page hosts no names at all.
  * - `verify` decrypts every composed link again and checks that the set
- *   still forms a valid draw before anything is sent.
+ *   still forms a valid draw before anything is sent. With a shortener it
+ *   also checks each short link redirects to the right reveal.
+ * - `export_links` writes every message to a private file so the organiser
+ *   can send them by email, WhatsApp or by hand, for free.
  *
- * Sending is done by the `send_outbox` method this package adds to
- * `@keeb/twilio/messaging` (see `twilio_outbox.ts`).
+ * Texting is optional and is done by the `send_outbox` method this package
+ * adds to `@keeb/twilio/messaging` (see `twilio_outbox.ts`), which needs a
+ * Twilio account.
  *
  * @module
  */
@@ -25,8 +29,11 @@ import { z } from "npm:zod@4";
 export const DEFAULT_MESSAGE_TEMPLATE =
   "Ho ho ho {name}! The {event} {year} draw is done. Tap your secret link to see who you're buying for (don't share it!): {link}";
 
-/** Version prefix of the reveal token carried in each link's `#fragment`. */
-export const TOKEN_VERSION = "v1";
+/** Link shorteners `compose` can use. `none` sends the full reveal link. */
+export const SHORTENERS = ["none", "is.gd"] as const;
+
+/** A link shortener `compose` can use. */
+export type Shortener = typeof SHORTENERS[number];
 
 const PairSchema = z.object({
   giver: z.string().describe("Name of the person buying the gift."),
@@ -45,8 +52,8 @@ const ParticipantSchema = z.object({
   name: z.string().trim().min(1).max(24).describe(
     "First name or nickname as it should appear in the reveal, e.g. Grandma. Must be unique (case-insensitive).",
   ),
-  phone: z.string().min(1).describe(
-    "Mobile number. Store it in a vault and reference it, e.g. ${{ vault.get(santa, PHONE_GRANDMA) }}. UK formats (07…, +44…, 0044…) and E.164 are accepted.",
+  phone: z.string().optional().describe(
+    "Mobile number, needed only to text this person through Twilio. Store it in a vault and reference it, e.g. ${{ vault.get(santa, PHONE_GRANDMA) }}. UK formats (07…, +44…, 0044…) and E.164 are accepted. Leave it out to hand this person their link yourself (see export_links).",
   ),
 });
 
@@ -54,8 +61,8 @@ const ParticipantSchema = z.object({
 export interface Participant {
   /** Name as it appears in the reveal; unique, case-insensitive. */
   name: string;
-  /** Mobile number (usually resolved from a vault reference). */
-  phone: string;
+  /** Mobile number (usually resolved from a vault reference); omit to send their link yourself. */
+  phone?: string;
 }
 
 const HistoryYearSchema = z.object({
@@ -98,6 +105,9 @@ const GlobalArgsSchema = z.object({
   messageTemplate: z.string().min(1).default(DEFAULT_MESSAGE_TEMPLATE).describe(
     "SMS body. Placeholders: {name}, {event}, {year}, {link}. Must contain {link}.",
   ),
+  shortener: z.enum(SHORTENERS).default("none").describe(
+    "Shorten each reveal link before it goes in the SMS. is.gd is free and keeps the #fragment, but is.gd then holds the full links (and so could read the pairings). none sends the full link.",
+  ),
 });
 
 /** Validated global arguments for a `@aaronge/secret-santa` model instance. */
@@ -118,6 +128,8 @@ export interface GlobalArgs {
   history: HistoryYear[];
   /** SMS body template with {name}, {event}, {year}, {link}. */
   messageTemplate: string;
+  /** Link shortener for the SMS, or `none`. */
+  shortener: Shortener;
 }
 
 const DrawSchema = z.object({
@@ -146,8 +158,13 @@ const DrawSummarySchema = z.object({
 
 const OutboxMessageSchema = z.object({
   name: z.string().describe("Who this message is for (the giver)."),
-  to: z.string().describe("Destination number in E.164 format."),
+  to: z.string().optional().describe(
+    "Destination number in E.164 format. Absent for people without a phone number, whose link the organiser hands over.",
+  ),
   body: z.string().describe("Full SMS text, including the reveal link."),
+  link: z.string().describe(
+    "The full reveal link. The body holds this or, with a shortener, a short link that redirects to it.",
+  ),
   segments: z.number().describe(
     "SMS segments this body will be billed as.",
   ),
@@ -157,10 +174,12 @@ const OutboxMessageSchema = z.object({
 export interface OutboxMessage {
   /** Who this message is for (the giver). */
   name: string;
-  /** Destination number in E.164 format. */
-  to: string;
+  /** Destination number in E.164 format; absent when there's no phone number. */
+  to?: string;
   /** Full SMS text, including the reveal link. */
   body: string;
+  /** The full reveal link; the body holds this or a short link to it. */
+  link: string;
   /** SMS segments this body will be billed as. */
   segments: number;
 }
@@ -206,6 +225,30 @@ export interface LinkCheck {
   totalSegments: number;
   /** ISO-8601 timestamp of the check. */
   checkedAt: string;
+}
+
+const LinkExportSchema = z.object({
+  year: z.number().describe("The year the links are for."),
+  path: z.string().describe("Where the links file was written."),
+  count: z.number().describe("How many people are in the file."),
+  alsoTexted: z.number().describe(
+    "How many of them also have a phone number, so they can be texted too.",
+  ),
+  exportedAt: z.string().describe("ISO-8601 timestamp of the export."),
+});
+
+/** Where `export_links` put the links file. Never holds the links themselves. */
+export interface LinkExport {
+  /** The year the links are for. */
+  year: number;
+  /** Where the links file was written. */
+  path: string;
+  /** How many people are in the file. */
+  count: number;
+  /** How many of them also have a phone number. */
+  alsoTexted: number;
+  /** ISO-8601 timestamp of the export. */
+  exportedAt: string;
 }
 
 /** Minimal logger shape methods depend on — matches `context.logger`. */
@@ -268,6 +311,7 @@ export function validateRoster(
     const key = nameKey(p.name);
     if (seen.has(key)) problems.push(`"${p.name}" appears more than once`);
     seen.add(key);
+    if (!p.phone) continue;
     try {
       normalisePhone(p.phone);
     } catch {
@@ -394,14 +438,12 @@ export function solveDraw(
 
 // ---------- reveal links ----------
 
-/** What a reveal link decrypts to. Short keys keep the URL (and SMS) short. */
+/** What a reveal link decrypts to. */
 export interface RevealPayload {
   /** Giver — the person opening the link. */
   g: string;
   /** Receiver — the person they're buying for. */
   r: string;
-  /** Year of the draw. */
-  y: number;
 }
 
 /** Encode bytes as unpadded base64url. */
@@ -418,53 +460,64 @@ export function fromBase64Url(s: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
+const KEY_BYTES = 16;
+const TAG_BYTES = 16;
+// Every token has its own random key that encrypts exactly one message, so
+// a fixed nonce never repeats under the same key. That keeps it out of the URL.
+const ZERO_IV = new Uint8Array(12);
+
 /**
- * Encrypt a payload into a self-contained token, `v1.<key>.<iv>.<ciphertext>`.
- * Each token has its own random 128-bit AES-GCM key, so one link reveals
- * nothing about another. The key travels inside the token: the link is the
- * secret, and the encryption stops the name being read off the URL by eye.
- * The page decrypts it with {@linkcode decryptToken} in site/link.js.
+ * Encrypt a payload into a self-contained base64url token: a random 128-bit
+ * AES-GCM key followed by the ciphertext of `giver\nreceiver`. One key per
+ * token means one link reveals nothing about another. The key travels inside
+ * the token: the link is the secret, and the encryption stops the name being
+ * read off the URL by eye. The page decrypts it with
+ * {@linkcode decryptToken} in site/link.js.
  */
 export async function encryptToken(payload: RevealPayload): Promise<string> {
-  const raw = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  if (/\n/.test(payload.g + payload.r)) {
+    throw new Error("names can't contain line breaks");
+  }
+  const raw = crypto.getRandomValues(new Uint8Array(KEY_BYTES));
   const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
     "encrypt",
   ]);
-  const plain = new TextEncoder().encode(JSON.stringify(payload));
+  const plain = new TextEncoder().encode(`${payload.g}\n${payload.r}`);
   const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plain),
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: ZERO_IV }, key, plain),
   );
-  return [TOKEN_VERSION, toBase64Url(raw), toBase64Url(iv), toBase64Url(ct)]
-    .join(".");
+  const token = new Uint8Array(KEY_BYTES + ct.length);
+  token.set(raw);
+  token.set(ct, KEY_BYTES);
+  return toBase64Url(token);
 }
 
 /** Decrypt a token from {@linkcode encryptToken}. Throws if it was altered or is malformed. */
 export async function decryptToken(token: string): Promise<RevealPayload> {
-  const [version, k, iv, ct] = token.split(".");
-  if (version !== TOKEN_VERSION || !k || !iv || !ct) {
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error("not a Secret Santa link token");
+  }
+  const bytes = fromBase64Url(token);
+  if (bytes.length < KEY_BYTES + TAG_BYTES + 3) {
     throw new Error("not a Secret Santa link token");
   }
   const key = await crypto.subtle.importKey(
     "raw",
-    fromBase64Url(k),
+    bytes.slice(0, KEY_BYTES),
     "AES-GCM",
     false,
     ["decrypt"],
   );
   const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromBase64Url(iv) },
+    { name: "AES-GCM", iv: ZERO_IV },
     key,
-    fromBase64Url(ct),
+    bytes.slice(KEY_BYTES),
   );
-  const p = JSON.parse(new TextDecoder().decode(plain));
-  if (
-    typeof p?.g !== "string" || typeof p?.r !== "string" ||
-    typeof p?.y !== "number"
-  ) {
+  const parts = new TextDecoder().decode(plain).split("\n");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error("link token has an unexpected shape");
   }
-  return p as RevealPayload;
+  return { g: parts[0], r: parts[1] };
 }
 
 /** Join the reveal page URL and a token: everything after `#` stays in the browser. */
@@ -474,8 +527,52 @@ export function buildLink(baseUrl: string, token: string): string {
 
 /** Pull the token back out of a link (or a whole SMS body containing one). */
 export function extractToken(text: string): string | null {
-  const m = text.match(/#(v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/);
+  const m = text.match(/#([A-Za-z0-9_-]{40,})/);
   return m ? m[1] : null;
+}
+
+/** `fetch`, injectable so tests never touch the network. */
+export type FetchFn = typeof fetch;
+
+/**
+ * Shorten a link with is.gd. is.gd keeps the `#fragment` in its redirect,
+ * so the token still only reaches the browser and is.gd itself.
+ */
+export async function shortenLink(
+  link: string,
+  fetchFn: FetchFn = fetch,
+): Promise<string> {
+  const url = `https://is.gd/create.php?format=simple&url=${
+    encodeURIComponent(link)
+  }`;
+  const res = await fetchFn(url);
+  const text = (await res.text()).trim();
+  if (!res.ok || !/^https:\/\/is\.gd\/[A-Za-z0-9_]+$/.test(text)) {
+    throw new Error(
+      `is.gd couldn't shorten a link (HTTP ${res.status}): ${
+        text.slice(0, 120)
+      }`,
+    );
+  }
+  return text;
+}
+
+/** Find an is.gd short link in an SMS body. */
+export function findShortLink(text: string): string | null {
+  const m = text.match(/https:\/\/is\.gd\/[A-Za-z0-9_]+/);
+  return m ? m[0] : null;
+}
+
+/** Where a short link redirects to, without following it; null if it doesn't redirect. */
+export async function resolveShortLink(
+  short: string,
+  fetchFn: FetchFn = fetch,
+): Promise<string | null> {
+  const res = await fetchFn(short, { method: "HEAD", redirect: "manual" });
+  await res.body?.cancel();
+  return res.status >= 300 && res.status < 400
+    ? res.headers.get("location")
+    : null;
 }
 
 /** Fill the message template's placeholders. */
@@ -531,6 +628,7 @@ export async function verifyOutbox(
   args: GlobalArgs,
   draw: { year: number; pairs: Pair[] },
   outbox: { year: number; messages: OutboxMessage[] },
+  resolve: (short: string) => Promise<string | null> = resolveShortLink,
 ): Promise<LinkCheck> {
   const problems: string[] = [];
   const names = args.participants.map((p) => p.name);
@@ -556,13 +654,29 @@ export async function verifyOutbox(
     );
   }
   for (const m of outbox.messages) {
-    const token = extractToken(m.body);
+    const token = extractToken(m.link ?? "");
     if (!token) {
       problems.push(`${m.name}'s message has no reveal link`);
       continue;
     }
-    if (!m.body.includes(args.baseUrl.replace(/#.*$/, ""))) {
+    if (!m.link.startsWith(args.baseUrl.replace(/#.*$/, ""))) {
       problems.push(`${m.name}'s link doesn't point at baseUrl`);
+    }
+    if (!m.body.includes(m.link)) {
+      const short = findShortLink(m.body);
+      if (!short) {
+        problems.push(`${m.name}'s message doesn't contain their link`);
+      } else {
+        let target: string | null = null;
+        try {
+          target = await resolve(short);
+        } catch {
+          // reported below
+        }
+        if (target !== m.link) {
+          problems.push(`${m.name}'s short link doesn't open their reveal`);
+        }
+      }
     }
     let p: RevealPayload;
     try {
@@ -575,7 +689,6 @@ export async function verifyOutbox(
     if (g !== nameKey(m.name)) {
       problems.push(`${m.name}'s link is addressed to someone else`);
     }
-    if (p.y !== args.year) problems.push(`${m.name}'s link is for ${p.y}`);
     if (drawn.get(g) !== r) {
       problems.push(`${m.name}'s link doesn't match the stored draw`);
     }
@@ -584,6 +697,7 @@ export async function verifyOutbox(
       problems.push(`${m.name}'s link breaks an exclusion`);
     }
     receivers.add(r);
+    if (m.to === undefined) continue;
     try {
       normalisePhone(m.to);
     } catch {
@@ -635,6 +749,38 @@ export function readOutbox(
     );
   }
   return { year, messages: messages as OutboxMessage[] };
+}
+
+/**
+ * Render the private links file `export_links` writes: one ready-to-paste
+ * message per person, for sending by email, WhatsApp or by hand.
+ */
+export function formatLinkExport(
+  eventName: string,
+  year: number,
+  messages: OutboxMessage[],
+): string {
+  const lines = [
+    `${eventName} ${year}: reveal links`,
+    "Send each person their own message. Anyone holding a link can see who that person drew,",
+    "so keep this file private and delete it once everyone has theirs.",
+    "",
+  ];
+  for (const m of messages) {
+    lines.push(
+      m.to
+        ? `== ${m.name} (also has a phone number for texting)`
+        : `== ${m.name}`,
+    );
+    lines.push(m.body, "");
+  }
+  return lines.join("\n");
+}
+
+/** Default links file: `secret-santa-links-<year>.txt` in the home directory. */
+export function defaultExportPath(year: number): string {
+  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
+  return `${home}/secret-santa-links-${year}.txt`;
 }
 
 /** Collect giver → receiver pairs from the last `years` years, from hand-entered history and stored draws. */
@@ -700,6 +846,13 @@ export const model = {
       description:
         "Pass/fail result of decrypting every composed link and re-validating the draw. Never names pairings.",
       schema: LinkCheckSchema,
+      lifetime: "infinite" as const,
+      garbageCollection: 10,
+    },
+    linkExport: {
+      description:
+        "Where export_links wrote the private links file, and how many people it covers. Never holds the links.",
+      schema: LinkExportSchema,
       lifetime: "infinite" as const,
       garbageCollection: 10,
     },
@@ -804,18 +957,19 @@ export const model = {
           const token = await encryptToken({
             g: pair.giver,
             r: pair.receiver,
-            y: g.year,
           });
+          const link = buildLink(g.baseUrl, token);
           const body = renderMessage(g.messageTemplate, {
             name: person.name.trim(),
             event: g.eventName,
             year: g.year,
-            link: buildLink(g.baseUrl, token),
+            link: g.shortener === "is.gd" ? await shortenLink(link) : link,
           });
           messages.push({
             name: person.name.trim(),
-            to: normalisePhone(person.phone),
+            ...(person.phone ? { to: normalisePhone(person.phone) } : {}),
             body,
+            link,
             segments: smsSegments(body),
           });
         }
@@ -866,6 +1020,77 @@ export const model = {
         const handle = await context.writeResource(
           "linkCheck",
           "linkcheck",
+          result as unknown as Record<string, unknown>,
+        );
+        return { dataHandles: [handle] };
+      },
+    },
+    export_links: {
+      description:
+        "Write each person's message and reveal link to a private file (readable only by you) so you can send them yourself by email, WhatsApp or by hand. Free, with no Twilio account needed. Re-checks the links first.",
+      arguments: z.object({
+        path: z.string().default("").describe(
+          "Where to write the file. Defaults to ~/secret-santa-links-<year>.txt. Keep it out of git.",
+        ),
+        only: z.array(z.string()).default([]).describe(
+          "Export only these names (case-insensitive). Empty means everyone.",
+        ),
+      }),
+      execute: async (
+        args: { path: string; only: string[] },
+        context: SantaContext,
+      ): Promise<{ dataHandles: { name: string }[] }> => {
+        const g = context.globalArgs;
+        const draw = await context.readResource(drawInstance(g.year)) as
+          | { year: number; pairs: Pair[] }
+          | null;
+        const stored = await context.readResource("outbox");
+        if (!draw || !stored) {
+          throw new Error("Nothing to export; run draw and compose first");
+        }
+        const outbox = readOutbox(stored);
+        const check = await verifyOutbox(g, draw, outbox);
+        if (!check.ok) {
+          throw new Error(
+            `Not exporting: the links failed their check (${
+              check.problems.join("; ")
+            })`,
+          );
+        }
+        const wanted = new Set(args.only.map(nameKey));
+        const unknown = [...wanted].filter((n) =>
+          !outbox.messages.some((m) => nameKey(m.name) === n)
+        );
+        if (unknown.length) {
+          throw new Error(
+            `only names not in the outbox: ${unknown.join(", ")}`,
+          );
+        }
+        const messages = wanted.size
+          ? outbox.messages.filter((m) => wanted.has(nameKey(m.name)))
+          : outbox.messages;
+        const path = args.path || defaultExportPath(g.year);
+        await Deno.writeTextFile(
+          path,
+          formatLinkExport(g.eventName, g.year, messages),
+          { mode: 0o600 },
+        );
+        // mode only applies when the file is created; tighten an existing one too
+        await Deno.chmod(path, 0o600).catch(() => {});
+        const result: LinkExport = {
+          year: g.year,
+          path,
+          count: messages.length,
+          alsoTexted: messages.filter((m) => m.to).length,
+          exportedAt: new Date().toISOString(),
+        };
+        context.logger.info(
+          "Wrote {count} reveal links to {path} (only you can read it)",
+          { count: result.count, path },
+        );
+        const handle = await context.writeResource(
+          "linkExport",
+          "linkexport",
           result as unknown as Record<string, unknown>,
         );
         return { dataHandles: [handle] };

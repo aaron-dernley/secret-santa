@@ -1,12 +1,19 @@
 #!/bin/bash
-# Runs the secret-santa workflow through a short-lived swamp serve on its own
+# Runs the secret-santa (or secret-santa-links) workflow through a short-lived swamp serve on its own
 # port, then tears it down. It passes --server explicitly and clears any
 # inherited SWAMP_SERVE_URL, so it never touches another repo's serve.
 #
 #   ./run-via-serve.sh                                   # dry run, everyone
 #   ./run-via-serve.sh --input testRecipient=Aaron --input dryRun=false
 #   ./run-via-serve.sh --input dryRun=false              # the real thing
+#   ./run-via-serve.sh links                             # free: write the links file instead
 set -euo pipefail
+
+WORKFLOW=secret-santa
+if [ "${1:-}" = "links" ]; then
+  WORKFLOW=secret-santa-links
+  shift
+fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT=9098
@@ -27,4 +34,4 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 
-swamp workflow run secret-santa --server "$SERVER" "$@"
+swamp workflow run "$WORKFLOW" --server "$SERVER" "$@"

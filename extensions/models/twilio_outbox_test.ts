@@ -242,10 +242,10 @@ Deno.test("pickOutbox explains a missing outbox, a malformed one, and an unresol
       pickOutbox([{
         name: "outbox",
         isLatest: true,
-        attributes: { messages: [{ name: "A", body: "x" }] },
+        attributes: { messages: [{ name: "A", to: "+447700900120" }] },
       }], "outbox"),
     Error,
-    "missing name/to/body",
+    "missing name/body",
   );
   assertThrows(
     () =>
@@ -325,4 +325,19 @@ Deno.test("send_outbox explains an outbox whose messages are still a vault refer
     Error,
     "workflow input expression",
   );
+});
+
+Deno.test("send_outbox skips people without a phone number and lists them as noPhone", async () => {
+  const h = harness();
+  const messages = [...OUTBOX, { name: "Dana", body: "Hi Dana #link" }];
+  await runSendOutbox(
+    args({ dryRun: false, messages }),
+    h.context,
+    h.fetch,
+    noSleep,
+  );
+  assertEquals(h.requests.length, 3);
+  const summary = h.written.at(-1)!.data as { noPhone: string[] };
+  assertEquals(summary.noPhone, ["Dana"]);
+  assert(h.logs.some((l) => l.includes("send their link yourself")));
 });

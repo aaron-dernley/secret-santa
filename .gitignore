@@ -20,3 +20,4 @@ models/@keeb/
 
 # Skill shipped by the pulled @keeb/twilio extension (third-party, re-pulled on demand)
 .claude/skills/twilio/
+secret-santa-links-*.txt
