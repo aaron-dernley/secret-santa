@@ -9,9 +9,9 @@
 #   ./run-via-serve.sh links                             # free: write the links file instead
 set -euo pipefail
 
-WORKFLOW=secret-santa
+WORKFLOW=@aaronge/secret-santa
 if [ "${1:-}" = "links" ]; then
-  WORKFLOW=secret-santa-links
+  WORKFLOW=@aaronge/secret-santa-links
   shift
 fi
 

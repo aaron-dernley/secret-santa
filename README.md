@@ -24,7 +24,7 @@ end.
 
 ### Two ways to hand out the links
 
-|                | Text them (`secret-santa` workflow)                       | Send them yourself (`secret-santa-links` workflow)               |
+|                | Text them (`@aaronge/secret-santa` workflow)              | Send them yourself (`@aaronge/secret-santa-links` workflow)      |
 | -------------- | --------------------------------------------------------- | ---------------------------------------------------------------- |
 | Cost           | A few pence per text, paid to Twilio                      | Free                                                             |
 | You need       | A Twilio account (see below) and everyone's mobile number | Nothing extra. Phone numbers are optional.                       |
@@ -104,7 +104,7 @@ globalArguments:
 ### Sending the links yourself (free)
 
 ```sh
-swamp workflow run secret-santa-links
+swamp workflow run @aaronge/secret-santa-links
 ```
 
 This draws, composes and verifies, then writes every person's message to
@@ -121,13 +121,13 @@ Create a `twilio` model: a `@keeb/twilio/messaging` instance with
 
 ```sh
 # Dry run: draw, compose, verify, and log who *would* be texted
-swamp workflow run secret-santa
+swamp workflow run @aaronge/secret-santa
 
 # Text only yourself, check the link on your phone
-swamp workflow run secret-santa --input testRecipient=Aaron --input dryRun=false
+swamp workflow run @aaronge/secret-santa --input testRecipient=Aaron --input dryRun=false
 
 # Text everyone
-swamp workflow run secret-santa --input dryRun=false
+swamp workflow run @aaronge/secret-santa --input dryRun=false
 ```
 
 Running the test send and then the real send texts the same draw both times,
@@ -242,12 +242,12 @@ once a year. They share the same first two jobs:
 - `prepare`: draw, compose, then verify
 - `check`: asserts the link check passed
 
-`secret-santa` then runs `send`, which calls `send_outbox` through Twilio. It's
-a dry run unless you pass `dryRun=false`. Pass `testRecipient` to text one
-person, and `redraw=true` to reshuffle.
+`@aaronge/secret-santa` then runs `send`, which calls `send_outbox` through
+Twilio. It's a dry run unless you pass `dryRun=false`. Pass `testRecipient` to
+text one person, and `redraw=true` to reshuffle.
 
-`secret-santa-links` then runs `export`, which calls `export_links`. Pass `path`
-to choose where the file goes, and `redraw=true` to reshuffle.
+`@aaronge/secret-santa-links` then runs `export`, which calls `export_links`.
+Pass `path` to choose where the file goes, and `redraw=true` to reshuffle.
 
 Both use the same stored draw, so you can text some people and send the rest
 their links from the file.

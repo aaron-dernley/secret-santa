@@ -9,6 +9,7 @@ import {
   type FetchLike,
   maskNumber,
   pickOutbox,
+  REDACTED_BODY,
   runSendOutbox,
   type SendOutboxArgs,
   type SendOutboxContext,
@@ -340,4 +341,16 @@ Deno.test("send_outbox skips people without a phone number and lists them as noP
   const summary = h.written.at(-1)!.data as { noPhone: string[] };
   assertEquals(summary.noPhone, ["Dana"]);
   assert(h.logs.some((l) => l.includes("send their link yourself")));
+});
+
+Deno.test("stored message records keep only a masked number and no text", async () => {
+  const h = harness();
+  await runSendOutbox(args({ dryRun: false }), h.context, h.fetch, noSleep);
+  const records = h.written.filter((w) => w.spec === "message");
+  assertEquals(records.length, 3);
+  for (const [i, r] of records.entries()) {
+    assertEquals(r.data.to, maskNumber(OUTBOX[i].to));
+    assertEquals(r.data.body, REDACTED_BODY);
+    assert(!JSON.stringify(r.data).includes(OUTBOX[i].to));
+  }
 });

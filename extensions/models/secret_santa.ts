@@ -871,6 +871,10 @@ export const model = {
         context: SantaContext,
       ): Promise<{ dataHandles: { name: string }[] }> => {
         const g = context.globalArgs;
+        context.logger.info("Drawing {year} for {count} people", {
+          year: g.year,
+          count: g.participants.length,
+        });
         const problems = validateRoster(g.participants, g.exclusions);
         if (problems.length) {
           throw new Error(`Roster problems: ${problems.join("; ")}`);
@@ -934,6 +938,13 @@ export const model = {
         context: SantaContext,
       ): Promise<{ dataHandles: { name: string }[] }> => {
         const g = context.globalArgs;
+        context.logger.info(
+          "Composing {year} messages (shortener: {shortener})",
+          {
+            year: g.year,
+            shortener: g.shortener,
+          },
+        );
         if (!g.messageTemplate.includes("{link}")) {
           throw new Error("messageTemplate must contain {link}");
         }
@@ -1008,6 +1019,7 @@ export const model = {
         if (!draw || !stored) {
           throw new Error("Nothing to verify; run draw and compose first");
         }
+        context.logger.info("Checking every {year} link", { year: g.year });
         const result = await verifyOutbox(g, draw, readOutbox(stored));
         if (result.ok) {
           context.logger.info(
@@ -1048,6 +1060,9 @@ export const model = {
         if (!draw || !stored) {
           throw new Error("Nothing to export; run draw and compose first");
         }
+        context.logger.info("Re-checking the {year} links before export", {
+          year: g.year,
+        });
         const outbox = readOutbox(stored);
         const check = await verifyOutbox(g, draw, outbox);
         if (!check.ok) {

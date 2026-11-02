@@ -10,6 +10,10 @@ models:
   - secret_santa.ts
   - twilio_outbox.ts
 
+workflows:
+  - workflow-secret-santa.yaml
+  - workflow-secret-santa-links.yaml
+
 dependencies:
   - "@keeb/twilio"
 

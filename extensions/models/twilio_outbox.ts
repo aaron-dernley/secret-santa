@@ -13,6 +13,10 @@
  */
 import { z } from "npm:zod@4";
 
+/** What a stored `message` record holds instead of the SMS text. */
+export const REDACTED_BODY =
+  "[not stored: the text holds a reveal link; it's in the sensitive outbox]";
+
 /** Twilio's documented per-number send rate for long codes is 1 message/second. */
 export const DEFAULT_THROTTLE_MS = 1100;
 
@@ -318,6 +322,15 @@ export async function runSendOutbox(
     throw new Error(`only names not in the outbox: ${unknown.join(", ")}`);
   }
 
+  context.logger.info(
+    "{mode} {count} of {total} messages from {outbox}",
+    {
+      mode: args.dryRun ? "Dry run over" : "Sending",
+      count: textable.length,
+      total: all.length,
+      outbox: `${args.sourceModel}/${args.outbox}`,
+    },
+  );
   const handles: { name: string }[] = [];
   const sent: BulkSend["sent"] = [];
   const failed: BulkSend["failed"] = [];
@@ -343,11 +356,13 @@ export async function runSendOutbox(
         status: res.status,
       });
       handles.push(
-        await context.writeResource(
-          "message",
-          res.sid,
-          res as unknown as Record<string, unknown>,
-        ),
+        // Plain (non-vault) data: keep the SID and status for tracking, but
+        // not the number or the text, which holds the reveal link.
+        await context.writeResource("message", res.sid, {
+          ...res,
+          to: maskNumber(res.to),
+          body: REDACTED_BODY,
+        }),
       );
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
