@@ -21,7 +21,7 @@ SERVER="ws://127.0.0.1:${PORT}"
 
 cd "$REPO_DIR"
 unset SWAMP_SERVE_URL
-swamp serve --repo-dir "$REPO_DIR" --port "$PORT" --host 127.0.0.1 --no-schedule --no-telemetry \
+swamp serve --repo-dir "$REPO_DIR" --port "$PORT" --host 127.0.0.1 --no-schedule \
   >/tmp/secret-santa-serve.log 2>&1 &
 SERVE_PID=$!
 trap 'kill "$SERVE_PID" 2>/dev/null || true' EXIT
